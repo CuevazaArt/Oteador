@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from oteador.data.vision import VisionDownloader, months_back
+from oteador.features.heikin_ashi import HeikinAshiReport, add_ha_ma, heikin_ashi
 from oteador.features.histogram import RatioHistogram
 from oteador.features.moving_average import price_ma_ratio, residual, sma
 from oteador.studies.regime import RegimeReport, classify_regime, log_returns
@@ -48,6 +49,7 @@ class CharacterizationReport:
     regime: RegimeReport
     spectral: SpectralReport
     histogram: RatioHistogram
+    heikin_ashi: HeikinAshiReport
 
 
 def run_characterization(
@@ -71,6 +73,9 @@ def run_characterization(
     res = residual(close, ma)
     ratio = price_ma_ratio(close, ma)
 
+    df_ha = add_ha_ma(heikin_ashi(df), ma_window)
+    ha_report = HeikinAshiReport.from_df(df_ha, ma_window=ma_window)
+
     regime = classify_regime(log_returns(close.to_numpy()))
     spec = spectral_characterize(res.to_numpy(), sampling_period_s)
     hist = RatioHistogram.from_array(ratio.to_numpy())
@@ -79,7 +84,7 @@ def run_characterization(
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         out_path = out / f"{symbol.upper()}-{interval}-ma{ma_window}.parquet"
-        df.with_columns(
+        df_ha.with_columns(
             [
                 ma.alias(f"sma_{ma_window}"),
                 res.alias("residual"),
@@ -96,6 +101,7 @@ def run_characterization(
         regime=regime,
         spectral=spec,
         histogram=hist,
+        heikin_ashi=ha_report,
     )
 
 
@@ -129,6 +135,21 @@ def format_report(report: CharacterizationReport) -> str:
     lines.append("  top modos (periodo s, fracción potencia):")
     for period_s, frac in spec.top_modes:
         lines.append(f"    {period_s:>10.1f}s  {frac:>7.2%}")
+    lines.append("")
+    lines.append(f"Heikin-Ashi (referencia tendencial, MA={report.heikin_ashi.ma_window}):")
+    ha = report.heikin_ashi
+    lines.append(
+        f"  Velas:           verde={ha.pct_green:.1%}  rojo={ha.pct_red:.1%}  "
+        f"doji={ha.pct_doji:.2%}"
+    )
+    lines.append(
+        f"  Racha máxima:    verde={ha.longest_green_streak} velas  "
+        f"rojo={ha.longest_red_streak} velas"
+    )
+    lines.append(
+        f"  HA vs SMA(HA):   above={ha.pct_ha_above_ma:.1%}  below={ha.pct_ha_below_ma:.1%}"
+    )
+    lines.append(f"  |HA - SMA(HA)| / SMA(HA) medio: {ha.mean_abs_distance_to_ma_pct:.6f}")
     lines.append("")
     lines.append("Histograma del ratio (close - MA) / MA:")
     h = report.histogram
