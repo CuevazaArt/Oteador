@@ -64,6 +64,26 @@ def add_ha_ma(df: pl.DataFrame, window: int) -> pl.DataFrame:
     return df.with_columns(df["ha_close"].rolling_mean(window_size=window).alias("sma_ha_close"))
 
 
+def add_ha_open_mas(df: pl.DataFrame, fast_window: int, slow_window: int) -> pl.DataFrame:
+    """Añade sma_ha_open_fast / sma_ha_open_slow para detectar cambios de tendencia.
+
+    El cruce de estas dos MAs sobre HA_Open suele ser más sensible que el color
+    de la vela HA para identificar volteos de tendencia.
+    """
+    if fast_window < 1 or slow_window < 1:
+        raise ValueError(f"windows deben ser >= 1; recibido fast={fast_window}, slow={slow_window}")
+    if fast_window >= slow_window:
+        raise ValueError(f"fast_window ({fast_window}) debe ser < slow_window ({slow_window})")
+    if "ha_open" not in df.columns:
+        raise ValueError("falta la columna ha_open; aplica heikin_ashi primero")
+    return df.with_columns(
+        [
+            df["ha_open"].rolling_mean(window_size=fast_window).alias("sma_ha_open_fast"),
+            df["ha_open"].rolling_mean(window_size=slow_window).alias("sma_ha_open_slow"),
+        ]
+    )
+
+
 def _longest_streak(mask: np.ndarray) -> int:
     """Longitud del bloque True consecutivo más largo."""
     if mask.size == 0:
@@ -133,4 +153,58 @@ class HeikinAshiReport:
         )
 
 
-__all__ = ["HeikinAshiReport", "add_ha_ma", "heikin_ashi"]
+@dataclass(frozen=True)
+class HaOpenMaCrossover:
+    fast_window: int
+    slow_window: int
+    pct_uptrend: float
+    pct_downtrend: float
+    pct_flat: float
+    n_crossovers: int
+    avg_bars_per_trend: float
+    longest_up_streak: int
+    longest_down_streak: int
+    current_alignment: str
+    samples: int
+
+    @classmethod
+    def from_df(cls, df: pl.DataFrame, fast_window: int, slow_window: int) -> Self:
+        for col in ("sma_ha_open_fast", "sma_ha_open_slow"):
+            if col not in df.columns:
+                raise ValueError(f"falta la columna {col}; aplica add_ha_open_mas primero")
+        fast = df["sma_ha_open_fast"].to_numpy()
+        slow = df["sma_ha_open_slow"].to_numpy()
+        valid = ~(np.isnan(fast) | np.isnan(slow))
+        if int(valid.sum()) < 2:
+            raise ValueError("muestras válidas insuficientes para crossover")
+        sign = np.where(fast > slow, 1, np.where(fast < slow, -1, 0)).astype(np.int8)
+        sign_valid = sign[valid]
+        n = int(sign_valid.size)
+        # Crossovers: signo cambia de +1 a -1 o viceversa (ignorando ceros).
+        s = sign_valid
+        crossings = int(np.sum((s[1:] * s[:-1]) < 0))
+        avg_trend = float(n / crossings) if crossings > 0 else float(n)
+        last = int(sign_valid[-1])
+        current = "UP" if last > 0 else ("DOWN" if last < 0 else "FLAT")
+        return cls(
+            fast_window=fast_window,
+            slow_window=slow_window,
+            pct_uptrend=float((sign_valid == 1).sum() / n),
+            pct_downtrend=float((sign_valid == -1).sum() / n),
+            pct_flat=float((sign_valid == 0).sum() / n),
+            n_crossovers=crossings,
+            avg_bars_per_trend=avg_trend,
+            longest_up_streak=_longest_streak(sign_valid == 1),
+            longest_down_streak=_longest_streak(sign_valid == -1),
+            current_alignment=current,
+            samples=n,
+        )
+
+
+__all__ = [
+    "HaOpenMaCrossover",
+    "HeikinAshiReport",
+    "add_ha_ma",
+    "add_ha_open_mas",
+    "heikin_ashi",
+]

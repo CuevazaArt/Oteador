@@ -4,7 +4,13 @@ import numpy as np
 import polars as pl
 import pytest
 
-from oteador.features.heikin_ashi import HeikinAshiReport, add_ha_ma, heikin_ashi
+from oteador.features.heikin_ashi import (
+    HaOpenMaCrossover,
+    HeikinAshiReport,
+    add_ha_ma,
+    add_ha_open_mas,
+    heikin_ashi,
+)
 
 
 def _df_ohlc(o: list[float], h: list[float], low: list[float], c: list[float]) -> pl.DataFrame:
@@ -79,3 +85,47 @@ def test_ha_report_on_constant_series() -> None:
     # Todo doji (HA_Close == HA_Open == 10).
     assert rep.pct_doji == pytest.approx(1.0, abs=0.05)
     assert rep.mean_abs_distance_to_ma_pct == pytest.approx(0.0)
+
+
+def test_add_ha_open_mas_validates_inputs() -> None:
+    df = _df_ohlc([10.0] * 5, [10.0] * 5, [10.0] * 5, [10.0] * 5)
+    df_ha = heikin_ashi(df)
+    with pytest.raises(ValueError, match="fast_window"):
+        add_ha_open_mas(df_ha, fast_window=10, slow_window=5)
+    with pytest.raises(ValueError, match="ha_open"):
+        add_ha_open_mas(_df_ohlc([], [], [], []), fast_window=3, slow_window=5)
+
+
+def test_ha_open_cross_on_monotonic_uptrend_is_all_up() -> None:
+    n = 500
+    o = np.linspace(100.0, 200.0, n)
+    c = o + 0.1
+    h = c + 0.05
+    low = o - 0.05
+    df = _df_ohlc(o.tolist(), h.tolist(), low.tolist(), c.tolist())
+    df_ha = add_ha_open_mas(heikin_ashi(df), fast_window=5, slow_window=20)
+    cx = HaOpenMaCrossover.from_df(df_ha, fast_window=5, slow_window=20)
+    assert cx.pct_uptrend > 0.99
+    assert cx.n_crossovers == 0
+    assert cx.current_alignment == "UP"
+    assert cx.longest_up_streak == cx.samples
+
+
+def test_ha_open_cross_on_oscillating_series_has_many_crossovers() -> None:
+    n = 1000
+    t = np.arange(n)
+    # Oscilación seno de período 50 → muchos cruces de las dos MAs.
+    base = 100.0 + 5.0 * np.sin(2 * np.pi * t / 50)
+    o = base
+    c = base + 0.01
+    h = base + 0.05
+    low = base - 0.05
+    df = _df_ohlc(o.tolist(), h.tolist(), low.tolist(), c.tolist())
+    df_ha = add_ha_open_mas(heikin_ashi(df), fast_window=3, slow_window=15)
+    cx = HaOpenMaCrossover.from_df(df_ha, fast_window=3, slow_window=15)
+    # Esperamos varios crossovers (>5) y que el promedio de velas por tendencia
+    # sea acorde al período.
+    assert cx.n_crossovers > 5
+    assert cx.avg_bars_per_trend < 100.0
+    # Las fracciones up/down deben ser similares (oscilación simétrica).
+    assert abs(cx.pct_uptrend - cx.pct_downtrend) < 0.2

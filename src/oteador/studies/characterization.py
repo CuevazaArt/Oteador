@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from oteador.data.vision import VisionDownloader, months_back
-from oteador.features.heikin_ashi import HeikinAshiReport, add_ha_ma, heikin_ashi
+from oteador.features.heikin_ashi import (
+    HaOpenMaCrossover,
+    HeikinAshiReport,
+    add_ha_ma,
+    add_ha_open_mas,
+    heikin_ashi,
+)
 from oteador.features.histogram import RatioHistogram
 from oteador.features.moving_average import price_ma_ratio, residual, sma
 from oteador.studies.regime import RegimeReport, classify_regime, log_returns
@@ -50,6 +56,7 @@ class CharacterizationReport:
     spectral: SpectralReport
     histogram: RatioHistogram
     heikin_ashi: HeikinAshiReport
+    ha_open_cross: HaOpenMaCrossover
 
 
 def run_characterization(
@@ -57,6 +64,8 @@ def run_characterization(
     interval: str,
     months: int,
     ma_window: int,
+    ha_fast_window: int = 6,
+    ha_slow_window: int = 18,
     cache_dir: Path | str = "data/vision",
     output_dir: Path | str | None = "data/characterization",
 ) -> CharacterizationReport:
@@ -73,8 +82,15 @@ def run_characterization(
     res = residual(close, ma)
     ratio = price_ma_ratio(close, ma)
 
-    df_ha = add_ha_ma(heikin_ashi(df), ma_window)
+    df_ha = add_ha_open_mas(
+        add_ha_ma(heikin_ashi(df), ma_window),
+        fast_window=ha_fast_window,
+        slow_window=ha_slow_window,
+    )
     ha_report = HeikinAshiReport.from_df(df_ha, ma_window=ma_window)
+    ha_cross = HaOpenMaCrossover.from_df(
+        df_ha, fast_window=ha_fast_window, slow_window=ha_slow_window
+    )
 
     regime = classify_regime(log_returns(close.to_numpy()))
     spec = spectral_characterize(res.to_numpy(), sampling_period_s)
@@ -102,6 +118,7 @@ def run_characterization(
         spectral=spec,
         histogram=hist,
         heikin_ashi=ha_report,
+        ha_open_cross=ha_cross,
     )
 
 
@@ -150,6 +167,23 @@ def format_report(report: CharacterizationReport) -> str:
         f"  HA vs SMA(HA):   above={ha.pct_ha_above_ma:.1%}  below={ha.pct_ha_below_ma:.1%}"
     )
     lines.append(f"  |HA - SMA(HA)| / SMA(HA) medio: {ha.mean_abs_distance_to_ma_pct:.6f}")
+    lines.append("")
+    cx = report.ha_open_cross
+    lines.append(
+        f"Cruce MM(HA_Open) fast={cx.fast_window} / slow={cx.slow_window} "
+        f"(detector de cambio de tendencia):"
+    )
+    lines.append(
+        f"  Alineación:       UP {cx.pct_uptrend:.1%}  DOWN {cx.pct_downtrend:.1%}  "
+        f"FLAT {cx.pct_flat:.2%}"
+    )
+    lines.append(
+        f"  Crossovers:       {cx.n_crossovers:,}  (≈ {cx.avg_bars_per_trend:.1f} velas/tendencia)"
+    )
+    lines.append(
+        f"  Racha máxima:     up={cx.longest_up_streak} velas  down={cx.longest_down_streak} velas"
+    )
+    lines.append(f"  Alineación actual: {cx.current_alignment}")
     lines.append("")
     lines.append("Histograma del ratio (close - MA) / MA:")
     h = report.histogram
