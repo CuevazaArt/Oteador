@@ -8,6 +8,7 @@ from pathlib import Path
 from oteador.data.vision import VisionDownloader, months_back
 from oteador.features.histogram import RatioHistogram
 from oteador.features.moving_average import price_ma_ratio, residual, sma
+from oteador.studies.regime import RegimeReport, classify_regime, log_returns
 from oteador.studies.spectral import SpectralReport
 from oteador.studies.spectral import characterize as spectral_characterize
 
@@ -44,6 +45,7 @@ class CharacterizationReport:
     months: int
     ma_window: int
     bars: int
+    regime: RegimeReport
     spectral: SpectralReport
     histogram: RatioHistogram
 
@@ -69,6 +71,7 @@ def run_characterization(
     res = residual(close, ma)
     ratio = price_ma_ratio(close, ma)
 
+    regime = classify_regime(log_returns(close.to_numpy()))
     spec = spectral_characterize(res.to_numpy(), sampling_period_s)
     hist = RatioHistogram.from_array(ratio.to_numpy())
 
@@ -90,6 +93,7 @@ def run_characterization(
         months=months,
         ma_window=ma_window,
         bars=int(df.height),
+        regime=regime,
         spectral=spec,
         histogram=hist,
     )
@@ -101,6 +105,19 @@ def format_report(report: CharacterizationReport) -> str:
     lines.append(f"=== {report.symbol} @ {report.interval} ({report.months} meses) ===")
     lines.append(f"Velas analizadas: {report.bars:,}")
     lines.append(f"Ventana MA:       {report.ma_window}")
+    lines.append("")
+    reg = report.regime
+    verdict = {
+        "MEAN_REVERTING": "compatible con la estrategia (reversión a la media)",
+        "NEUTRAL": "random walk; ventaja marginal, operar con cautela",
+        "TRENDING": "INCOMPATIBLE — pausar operativa hasta cambio de régimen",
+    }.get(reg.classification, "")
+    lines.append("Régimen (Hurst R/S sobre log-returns):")
+    lines.append(f"  Hurst:           {reg.hurst:+.4f}  (n={reg.samples:,})")
+    lines.append(
+        f"  Umbrales:        MR < {reg.mean_reverting_threshold} < N < {reg.trending_threshold} < T"
+    )
+    lines.append(f"  Clasificación:   {reg.classification}  → {verdict}")
     lines.append("")
     lines.append("Espectro del residuo (close - MA):")
     spec = report.spectral
