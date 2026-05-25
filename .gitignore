@@ -35,12 +35,12 @@ env/
 .DS_Store
 Thumbs.db
 
-# Oteador artefacts
-data/
+# Oteador artefacts (anclados a la raíz para no ocultar src/oteador/data/)
+/data/
 *.parquet
 *.duckdb
 *.zip
 .env
-secrets/
-logs/
-optuna_studies/
+/secrets/
+/logs/
+/optuna_studies/

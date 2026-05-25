@@ -24,6 +24,10 @@ dependencies = [
     "structlog>=24.1",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    "httpx>=0.27",
+    "polars>=1.0",
+    "numpy>=1.26",
+    "scipy>=1.13",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +37,7 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.5",
     "mypy>=1.10",
+    "scipy-stubs>=1.13",
 ]
 
 [project.urls]
@@ -51,6 +56,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
