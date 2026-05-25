@@ -9,7 +9,7 @@ description = "Supervisor de histogramas para trading adaptativo en Binance Spot
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [{ name = "Oteador Contributors" }]
+authors = [{ name = "Cuevaza" }]
 keywords = ["binance", "trading", "cryptocurrency", "mean-reversion", "histogram", "optuna"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -41,8 +41,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/USER/oteador"
-Issues = "https://github.com/USER/oteador/issues"
+Homepage = "https://github.com/CuevazaArt/Oteador"
+Issues = "https://github.com/CuevazaArt/Oteador/issues"
+Repository = "https://github.com/CuevazaArt/Oteador.git"
 
 [project.scripts]
 oteador = "oteador.cli:app"
