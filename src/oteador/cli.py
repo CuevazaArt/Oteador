@@ -119,5 +119,66 @@ def study(
     typer.echo(format_study_report(art))
 
 
+@app.command(name="ha-study")
+def ha_study(
+    symbol: str = typer.Argument(..., help="Símbolo Binance Spot, p.ej. BTCUSDT"),
+    interval: str = typer.Option("1h", "--interval", "-i", help="Intervalo (1h+ recomendado)"),
+    months: int = typer.Option(12, "--months", "-m", min=1),
+    n_trials: int = typer.Option(100, "--n-trials", min=1),
+    n_folds: int = typer.Option(5, "--n-folds", min=2),
+    min_trades_per_fold: int = typer.Option(3, "--min-trades", min=1),
+    fee_pct: float = typer.Option(0.001, "--fee"),
+    fast_max: int = typer.Option(50, "--fast-max", min=2, help="Máximo fast_window"),
+    slow_max: int = typer.Option(200, "--slow-max", min=3, help="Máximo slow_window"),
+    holding_max: int = typer.Option(100, "--holding-max", min=1, help="Máximo min_holding_bars"),
+    seed: int = typer.Option(42, "--seed"),
+    cache_dir: Path = typer.Option(Path("data/vision"), "--cache-dir"),
+    storage_dir: Path = typer.Option(Path("optuna_studies"), "--storage-dir"),
+    fresh: bool = typer.Option(False, "--fresh", help="Ignorar storage previo"),
+) -> None:
+    """Optuna walk-forward sobre HA-cross (trend-following por cruce de MMs en HA_Open)."""
+    from oteador.data.vision import VisionDownloader, months_back
+    from oteador.studies.characterization import interval_to_seconds
+    from oteador.studies.ha_cross_study import format_study_report, run_study
+    from oteador.studies.optuna_study import WalkForwardConfig
+
+    sampling_period_s = interval_to_seconds(interval)
+
+    typer.echo(f"[1/3] Descargando {months} meses de {symbol} @ {interval} ...")
+    with VisionDownloader(cache_dir=cache_dir) as dl:
+        df = dl.load_months(symbol, interval, months_back(months))
+    typer.echo(f"      {df.height:,} velas")
+
+    storage_path: Path | None
+    if fresh:
+        storage_path = None
+        study_name = None
+    else:
+        storage_path = storage_dir / f"ha-{symbol.upper()}-{interval}.db"
+        study_name = f"ha-{symbol.upper()}-{interval}-{months}m"
+
+    typer.echo(
+        f"[2/3] {n_trials} trials, {n_folds} folds walk-forward "
+        f"(min {min_trades_per_fold} trades/fold); "
+        f"fast 1-{fast_max} x slow 2-{slow_max} x hold 1-{holding_max} ..."
+    )
+    art = run_study(
+        df=df,
+        sampling_period_seconds=sampling_period_s,
+        n_trials=n_trials,
+        cv=WalkForwardConfig(n_folds=n_folds, min_trades_per_fold=min_trades_per_fold),
+        fee_pct=fee_pct,
+        fast_max=fast_max,
+        slow_max=slow_max,
+        holding_max=holding_max,
+        seed=seed,
+        study_name=study_name,
+        storage_path=storage_path,
+    )
+
+    typer.echo("[3/3] Resultados:\n")
+    typer.echo(format_study_report(art))
+
+
 if __name__ == "__main__":
     app()
