@@ -45,6 +45,35 @@ def interval_to_ms(interval: str) -> int:
         ) from exc
 
 
+def detect_timestamp_unit_factor(df: pl.DataFrame, source_interval: str) -> int:
+    """Detecta el multiplicador para pasar de ms a la unidad real de ``open_time``.
+
+    Binance Vision cambió en 2025 la resolución del campo ``open_time`` de
+    milisegundos a microsegundos en algunos endpoints. Esta función infiere
+    la unidad a partir de la diferencia entre dos klines consecutivas y
+    devuelve:
+
+    - ``1``    si ``open_time`` está en milisegundos (formato histórico).
+    - ``1000`` si ``open_time`` está en microsegundos (formato actual).
+
+    Lanza ``ValueError`` si la delta observada no coincide con ninguno
+    de los dos casos.
+    """
+    if df.height < 2:
+        return 1
+    src_ms = interval_to_ms(source_interval)
+    ot = df["open_time"].sort()
+    delta = int(ot[1] - ot[0])
+    if delta == src_ms:
+        return 1
+    if delta == src_ms * 1000:
+        return 1000
+    raise ValueError(
+        f"delta entre klines = {delta}; no coincide ni con {src_ms}ms ni con "
+        f"{src_ms * 1000}µs para source_interval={source_interval!r}"
+    )
+
+
 def aggregate_klines(
     df: pl.DataFrame,
     source_interval: str,
@@ -85,10 +114,14 @@ def aggregate_klines(
     if missing:
         raise ValueError(f"faltan columnas requeridas: {sorted(missing)}")
 
+    unit_factor = detect_timestamp_unit_factor(df, source_interval)
+    tgt_unit = tgt_ms * unit_factor
     bars_per_bucket = tgt_ms // src_ms
 
     sorted_df = df.sort("open_time")
-    bucketed = sorted_df.with_columns(((pl.col("open_time") // tgt_ms) * tgt_ms).alias("_bucket"))
+    bucketed = sorted_df.with_columns(
+        ((pl.col("open_time") // tgt_unit) * tgt_unit).alias("_bucket")
+    )
 
     agg_exprs: list[pl.Expr] = [
         pl.col("open").first().alias("open"),
@@ -125,4 +158,9 @@ def aggregate_klines(
     return grouped.drop("_n_bars")
 
 
-__all__ = ["INTERVAL_MS", "aggregate_klines", "interval_to_ms"]
+__all__ = [
+    "INTERVAL_MS",
+    "aggregate_klines",
+    "detect_timestamp_unit_factor",
+    "interval_to_ms",
+]

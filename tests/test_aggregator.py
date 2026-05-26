@@ -4,7 +4,12 @@ import numpy as np
 import polars as pl
 import pytest
 
-from oteador.data.aggregator import INTERVAL_MS, aggregate_klines, interval_to_ms
+from oteador.data.aggregator import (
+    INTERVAL_MS,
+    aggregate_klines,
+    detect_timestamp_unit_factor,
+    interval_to_ms,
+)
 
 
 def _make_1m_df(n_bars: int, base_price: float = 100.0) -> pl.DataFrame:
@@ -109,3 +114,42 @@ def test_all_known_intervals_are_strictly_increasing() -> None:
     sizes = sorted(INTERVAL_MS.values())
     assert sizes == sorted(set(sizes))  # unicidad
     assert all(b > a for a, b in pairwise(sizes))
+
+
+def _make_1m_df_microseconds(n_bars: int) -> pl.DataFrame:
+    """Mismo df que _make_1m_df pero con open_time en microsegundos."""
+    df = _make_1m_df(n_bars)
+    # Pasar open_time y close_time de ms a µs
+    return df.with_columns(
+        (pl.col("open_time") * 1000).alias("open_time"),
+        (pl.col("close_time") * 1000).alias("close_time"),
+    )
+
+
+def test_detect_timestamp_unit_factor_ms() -> None:
+    df = _make_1m_df(10)
+    assert detect_timestamp_unit_factor(df, "1m") == 1
+
+
+def test_detect_timestamp_unit_factor_us() -> None:
+    df = _make_1m_df_microseconds(10)
+    assert detect_timestamp_unit_factor(df, "1m") == 1000
+
+
+def test_detect_timestamp_unit_factor_unknown_raises() -> None:
+    # Delta arbitraria que no es ni ms ni µs para 1m
+    df = _make_1m_df(10).with_columns((pl.col("open_time") * 7).alias("open_time"))
+    with pytest.raises(ValueError, match="delta entre klines"):
+        detect_timestamp_unit_factor(df, "1m")
+
+
+def test_aggregate_works_on_microsecond_timestamps() -> None:
+    """Reproduce el caso real de Binance Vision: open_time en µs."""
+    df = _make_1m_df_microseconds(180)  # 3h en 1m
+    out = aggregate_klines(df, "1m", "1h")
+    assert out.height == 3
+    # El bucket debe estar en µs (mantiene la unidad original).
+    assert out["open_time"][0] == 0
+    assert out["open_time"][1] == 3_600_000 * 1000  # µs
+    # OHLCV preservado: el primer bucket abarca las primeras 60 barras 1m.
+    assert out["volume"][0] == pytest.approx(float(df["volume"].head(60).sum()))
