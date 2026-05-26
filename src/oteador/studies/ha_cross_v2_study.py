@@ -254,18 +254,21 @@ def make_objective(
         use_rolling = trial.suggest_categorical(
             "use_rolling_percentiles", list(space.use_rolling_percentiles_choices)
         )
+        # Nombres distintos por modo para que Optuna no se queje de configuraciones
+        # `log` incompatibles entre trials (el "rolling" usa rango lineal en (0,1)
+        # como percentil; el "static" usa rango log sobre proporciones pequeñas).
         if use_rolling:
-            entry_dist = trial.suggest_float("entry_max_distance_pct", 0.50, 0.95)
-            exit_dist = trial.suggest_float("exit_min_distance_pct", 0.70, 0.99)
+            entry_dist = trial.suggest_float("entry_distance_quantile", 0.50, 0.95)
+            exit_dist = trial.suggest_float("exit_distance_quantile", 0.70, 0.99)
             lookback = trial.suggest_int(
                 "lookback_bars", space.lookback_min, space.lookback_max, log=True
             )
         else:
             entry_dist = trial.suggest_float(
-                "entry_max_distance_pct", 0.001, space.entry_distance_max_pct, log=True
+                "entry_distance_static_pct", 0.001, space.entry_distance_max_pct, log=True
             )
             exit_dist = trial.suggest_float(
-                "exit_min_distance_pct", 0.001, space.exit_distance_max_pct, log=True
+                "exit_distance_static_pct", 0.001, space.exit_distance_max_pct, log=True
             )
             lookback = 500  # ignorado cuando use_rolling=False
 
