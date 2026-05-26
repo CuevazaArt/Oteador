@@ -180,5 +180,97 @@ def ha_study(
     typer.echo(format_study_report(art))
 
 
+@app.command(name="ha-study-v2")
+def ha_study_v2(
+    symbol: str = typer.Argument(..., help="Símbolo Binance Spot, p.ej. BTCUSDT"),
+    months: int = typer.Option(12, "--months", "-m", min=1, help="Meses de 1m a descargar"),
+    n_trials: int = typer.Option(200, "--n-trials", min=1),
+    n_folds: int = typer.Option(6, "--n-folds", min=2),
+    min_trades_per_fold: int = typer.Option(10, "--min-trades", min=1),
+    min_positive_folds: int = typer.Option(
+        0, "--min-positive-folds", min=0, help="Folds OOS con sharpe>0 mínimos"
+    ),
+    fee_pct: float = typer.Option(0.001, "--fee"),
+    timeframes: str = typer.Option(
+        "15m,30m,1h,2h,4h",
+        "--timeframes",
+        help="Lista CSV de TFs candidatos para que Optuna escoja",
+    ),
+    fast_max: int = typer.Option(10, "--fast-max", min=2),
+    slow_max: int = typer.Option(30, "--slow-max", min=3),
+    holding_max: int = typer.Option(20, "--holding-max", min=1),
+    confirmation_max: int = typer.Option(5, "--confirmation-max", min=1),
+    whipsaw_weight: float = typer.Option(1.0, "--w-whipsaw", min=0.0),
+    drawdown_weight: float = typer.Option(1.0, "--w-dd", min=0.0),
+    win_rate_weight: float = typer.Option(1.0, "--w-win", min=0.0),
+    seed: int = typer.Option(42, "--seed"),
+    cache_dir: Path = typer.Option(Path("data/vision"), "--cache-dir"),
+    storage_dir: Path = typer.Option(Path("optuna_studies"), "--storage-dir"),
+    fresh: bool = typer.Option(False, "--fresh", help="Ignorar storage previo"),
+) -> None:
+    """Optuna walk-forward HA-Cross v2: multi-TF + filtros anti-whipsaw + distancia a la MM."""
+    from oteador.data.vision import VisionDownloader, months_back
+    from oteador.studies.ha_cross_v2_study import (
+        CompositeScoreWeights,
+        HaCrossV2SearchSpace,
+        StabilityConfig,
+        format_study_report,
+        run_study,
+    )
+    from oteador.studies.optuna_study import WalkForwardConfig
+
+    tfs = tuple(t.strip() for t in timeframes.split(",") if t.strip())
+    if not tfs:
+        raise typer.BadParameter("--timeframes vacío")
+
+    typer.echo(f"[1/3] Descargando {months} meses de {symbol} @ 1m ...")
+    with VisionDownloader(cache_dir=cache_dir) as dl:
+        df_1m = dl.load_months(symbol, "1m", months_back(months))
+    typer.echo(f"      {df_1m.height:,} velas 1m base")
+
+    space = HaCrossV2SearchSpace(
+        timeframes=tfs,
+        fast_max=fast_max,
+        slow_max=slow_max,
+        holding_max=holding_max,
+        confirmation_max=confirmation_max,
+    )
+    weights = CompositeScoreWeights(
+        whipsaw=whipsaw_weight,
+        drawdown=drawdown_weight,
+        win_rate=win_rate_weight,
+    )
+    stability = StabilityConfig(min_positive_folds=min_positive_folds)
+    cv = WalkForwardConfig(n_folds=n_folds, min_trades_per_fold=min_trades_per_fold)
+
+    storage_path: Path | None
+    if fresh:
+        storage_path = None
+        study_name = None
+    else:
+        storage_path = storage_dir / f"ha-v2-{symbol.upper()}-{months}m.db"
+        study_name = f"ha-v2-{symbol.upper()}-{months}m"
+
+    typer.echo(
+        f"[2/3] {n_trials} trials, {n_folds} folds walk-forward (min {min_trades_per_fold} "
+        f"trades/fold); TFs candidatos: {','.join(tfs)} ..."
+    )
+    art = run_study(
+        df_1m=df_1m,
+        n_trials=n_trials,
+        cv=cv,
+        fee_pct=fee_pct,
+        space=space,
+        weights=weights,
+        stability=stability,
+        seed=seed,
+        study_name=study_name,
+        storage_path=storage_path,
+    )
+
+    typer.echo("[3/3] Resultados:\n")
+    typer.echo(format_study_report(art))
+
+
 if __name__ == "__main__":
     app()
